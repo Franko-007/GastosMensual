@@ -27,10 +27,10 @@ const COLORS = [
   "#e08a5c","#5ce0c0","#e05ca8"
 ];
 
-const GAS_URL    = "https://script.google.com/macros/s/AKfycbxciuOcsJiQEfhkNvnnFFenAcCrvlLMUdkSZmiX4ZNAQ3CA4nGYEd8lQO3KSsy8WyL3/exec";
+const GAS_URL     = "https://script.google.com/macros/s/AKfycbxciuOcsJiQEfhkNvnnFFenAcCrvlLMUdkSZmiX4ZNAQ3CA4nGYEd8lQO3KSsy8WyL3/exec";
 const STORAGE_KEY = "gastos2026_v2";
 
-// ─── STATE (declarado primero, antes de todo) ─────────────────────────────────
+// ─── STATE ────────────────────────────────────────────────────────────────────
 let currentMonth = MESES[new Date().getMonth()];
 const paidState  = {};
 MESES.forEach(m => { paidState[m] = new Set(); });
@@ -56,12 +56,13 @@ const getPaidTotal = month => {
 
 // Pendientes primero, pagados al final
 function getSortedItems(month) {
-  const items = getMonthGastos(month);
-  const set   = paidState[month];
+  const items   = getMonthGastos(month);
+  const set     = paidState[month];
   const pending = [];
   const paid    = [];
   items.forEach((g, i) => {
-    set.has(i) ? paid.push({ ...g, origIndex: i }) : pending.push({ ...g, origIndex: i });
+    const item = { ...g, origIndex: i };
+    set.has(i) ? paid.push(item) : pending.push(item);
   });
   return [...pending, ...paid];
 }
@@ -72,19 +73,21 @@ function saveLocal() {
     const obj = {};
     MESES.forEach(m => { obj[m] = Array.from(paidState[m]); });
     localStorage.setItem(STORAGE_KEY, JSON.stringify(obj));
+    console.log("💾 Guardado local OK:", obj[currentMonth]);
   } catch(e) { console.warn("saveLocal error:", e); }
 }
 
 function loadLocal() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return false;
+    if (!raw) { console.log("📭 No hay datos locales"); return false; }
     const obj = JSON.parse(raw);
     MESES.forEach(m => {
       if (Array.isArray(obj[m])) {
         paidState[m] = new Set(obj[m].map(Number));
       }
     });
+    console.log("📦 Cargado local OK:", obj[currentMonth]);
     return true;
   } catch(e) {
     console.warn("loadLocal error:", e);
@@ -92,7 +95,7 @@ function loadLocal() {
   }
 }
 
-// ─── SYNC GOOGLE SHEETS ───────────────────────────────────────────────────────
+// ─── SYNC STATUS ──────────────────────────────────────────────────────────────
 function setStatus(msg, type) {
   const el = document.getElementById("sync-status");
   if (!el) return;
@@ -101,18 +104,21 @@ function setStatus(msg, type) {
   if (type === "ok") setTimeout(() => { el.textContent = ""; el.className = "sync-status"; }, 3000);
 }
 
+// ─── SYNC TO SHEETS ───────────────────────────────────────────────────────────
 async function syncToSheets() {
   const items = getMonthGastos(currentMonth);
   const set   = paidState[currentMonth];
   try {
     await fetch(GAS_URL, {
-      method: "POST",
-      mode:   "no-cors",
+      method:  "POST",
+      mode:    "no-cors",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         action:      "updatePagos",
         mes:         currentMonth,
-        gastos:      items.map((g, i) => ({ n: g.n, detalle: g.detalle, monto: g.monto, pagado: set.has(i), index: i })),
+        gastos:      items.map((g, i) => ({
+          n: g.n, detalle: g.detalle, monto: g.monto, pagado: set.has(i), index: i
+        })),
         totalPagado: getPaidTotal(currentMonth),
         timestamp:   new Date().toISOString(),
       }),
@@ -123,11 +129,17 @@ async function syncToSheets() {
   }
 }
 
+// ─── LOAD FROM SHEETS (JSONP) ─────────────────────────────────────────────────
 function loadFromSheets() {
   setStatus("⏳ Cargando...", "loading");
   return new Promise(resolve => {
-    const cbName  = "gsCb_" + Date.now();
-    const timer   = setTimeout(() => { cleanup(); loadLocal(); resolve(false); }, 7000);
+    const cbName = "gsCb_" + Date.now();
+    const timer  = setTimeout(() => {
+      cleanup();
+      console.warn("⏰ Sheets timeout — usando local");
+      setStatus("📱 Datos locales", "warn");
+      resolve(false);
+    }, 7000);
 
     function cleanup() {
       clearTimeout(timer);
@@ -141,36 +153,50 @@ function loadFromSheets() {
       if (data && data.pagos) {
         MESES.forEach(m => {
           paidState[m] = new Set();
-          if (Array.isArray(data.pagos[m])) data.pagos[m].forEach(i => paidState[m].add(Number(i)));
+          if (Array.isArray(data.pagos[m])) {
+            data.pagos[m].forEach(i => paidState[m].add(Number(i)));
+          }
         });
         saveLocal();
         setStatus("☁️ Datos cargados", "ok");
+        console.log("☁️ Cargado desde Sheets OK");
         resolve(true);
       } else {
-        loadLocal();
+        console.warn("⚠️ Sheets respondió sin datos");
         resolve(false);
       }
     };
 
-    const s  = document.createElement("script");
-    s.id     = "_jsonp";
-    s.src    = GAS_URL + "?action=getPagos&callback=" + cbName;
-    s.onerror = () => { cleanup(); loadLocal(); setStatus("📱 Datos locales", "warn"); resolve(false); };
+    const s   = document.createElement("script");
+    s.id      = "_jsonp";
+    s.src     = GAS_URL + "?action=getPagos&callback=" + cbName;
+    s.onerror = () => {
+      cleanup();
+      setStatus("📱 Sin conexión — datos locales", "warn");
+      console.warn("❌ Error al cargar Sheets");
+      resolve(false);
+    };
     document.head.appendChild(s);
   });
 }
 
-// ─── TOGGLE PAID — núcleo de la función ──────────────────────────────────────
+// ─── TOGGLE PAID ──────────────────────────────────────────────────────────────
 function togglePaid(origIndex) {
   const set = paidState[currentMonth];
 
   // 1. Cambiar estado
-  set.has(origIndex) ? set.delete(origIndex) : set.add(origIndex);
+  if (set.has(origIndex)) {
+    set.delete(origIndex);
+    console.log("❌ Desmarcado índice", origIndex);
+  } else {
+    set.add(origIndex);
+    console.log("✅ Marcado índice", origIndex);
+  }
 
   // 2. Guardar en localStorage INMEDIATAMENTE
   saveLocal();
 
-  // 3. Re-renderizar (el item se reordena solo)
+  // 3. Re-renderizar (reordena automáticamente)
   renderAll();
 
   // 4. Sincronizar con Sheets en segundo plano
@@ -225,7 +251,8 @@ function renderTable() {
       <td class="amount-cell ${isPaid ? "amount-paid" : ""}">${fmt(g.monto)}</td>
       <td class="pct-cell">${pct}%</td>
       <td class="td-check">
-        <button class="check-btn ${isPaid ? "check-active" : ""}" onclick="togglePaid(${g.origIndex})">
+        <button class="check-btn ${isPaid ? "check-active" : ""}"
+                onclick="togglePaid(${g.origIndex})">
           <span class="check-icon">${isPaid ? "✓" : "○"}</span>
           <span class="check-label">${isPaid ? "Pagado" : "Pendiente"}</span>
         </button>
@@ -255,7 +282,8 @@ function renderMobileCards() {
         <div class="exp-amount ${isPaid ? "paid-amount" : ""}">${fmt(g.monto)}</div>
       </div>
       <span class="exp-pct">${pct}%</span>
-      <button class="exp-check-btn ${isPaid ? "active" : ""}" onclick="togglePaid(${g.origIndex})">
+      <button class="exp-check-btn ${isPaid ? "active" : ""}"
+              onclick="togglePaid(${g.origIndex})">
         ${isPaid ? "✓" : "○"}
       </button>`;
     container.appendChild(card);
@@ -281,9 +309,9 @@ function renderSummary() {
   document.getElementById("paid-count-badge").textContent = `${paidCount}/${totalCount}`;
 
   document.getElementById("sub-pagado").textContent =
-    paidCount === 0         ? "Ningún gasto cancelado aún" :
+    paidCount === 0          ? "Ningún gasto cancelado aún" :
     paidCount === totalCount ? "✅ ¡Todos los gastos cancelados!" :
-    `${paidCount} de ${totalCount} gastos cancelados`;
+                               `${paidCount} de ${totalCount} gastos cancelados`;
 
   document.getElementById("bar-gastos").style.width     = Math.min((total  / sueldo) * 100, 100) + "%";
   document.getElementById("bar-disponible").style.width = Math.max((disp   / sueldo) * 100, 0)   + "%";
@@ -299,7 +327,7 @@ function renderChart() {
   canvas.width = canvas.height = size;
 
   const ctx = canvas.getContext("2d");
-  const cx = size / 2, cy = size / 2;
+  const cx  = size / 2, cy = size / 2;
   ctx.clearRect(0, 0, size, size);
 
   let start = -Math.PI / 2;
@@ -356,8 +384,21 @@ let deferredPrompt = null;
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
     navigator.serviceWorker.register("./sw.js")
-      .then(() => { document.getElementById("pwa-status").textContent = "✓ App disponible offline"; })
-      .catch(e => console.warn("SW:", e));
+      .then(reg => {
+        console.log("SW registrado:", reg.scope);
+        document.getElementById("pwa-status").textContent = "✓ App disponible offline";
+        // Forzar actualización del SW si hay nueva versión
+        reg.addEventListener("updatefound", () => {
+          const newSW = reg.installing;
+          newSW.addEventListener("statechange", () => {
+            if (newSW.state === "installed" && navigator.serviceWorker.controller) {
+              console.log("🔄 Nueva versión disponible — recargando...");
+              window.location.reload();
+            }
+          });
+        });
+      })
+      .catch(e => console.warn("SW error:", e));
   });
 }
 
@@ -376,7 +417,6 @@ window.addEventListener("resize", renderChart);
 
 // ─── INIT ─────────────────────────────────────────────────────────────────────
 document.addEventListener("DOMContentLoaded", async () => {
-  // PWA buttons
   document.getElementById("pwa-install-btn").addEventListener("click", async () => {
     if (!deferredPrompt) return;
     deferredPrompt.prompt();
@@ -388,11 +428,11 @@ document.addEventListener("DOMContentLoaded", async () => {
     document.getElementById("pwa-banner").style.display = "none";
   });
 
-  // PASO 1: cargar localStorage primero (instantáneo)
+  // PASO 1: cargar localStorage (instantáneo, sin espera)
   loadLocal();
   selectMonth(currentMonth);
 
-  // PASO 2: intentar traer datos frescos de Sheets (en segundo plano)
+  // PASO 2: intentar traer datos frescos de Sheets
   const ok = await loadFromSheets();
   if (ok) selectMonth(currentMonth);
 });
