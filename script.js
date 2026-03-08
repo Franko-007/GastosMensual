@@ -28,50 +28,84 @@ const COLORS = [
 ];
 
 // ─── GOOGLE APPS SCRIPT API ───────────────────────────────────────────────────
-const GAS_URL = "https://script.google.com/macros/s/AKfycbxEgAqCo075hdmRPjnJlCtErb0ZnEGUq5tghYGbHLZiEMVAoRnQmwd3yPVr4tpi45rC/exec";
+const GAS_URL = "https://script.google.com/macros/s/AKfycbxwztGeOMjSjanbHn0nRHkET-tpDXC9bZ7f1-T0nmtdPVRwHlW27n_r0DJRXkr8F7o1/exec";
 
+// Guarda estado en Sheets (usa localStorage como caché local también)
 async function syncToSheets(payload) {
+  // Siempre guardar en localStorage como respaldo offline
+  savePaidStateLocal();
   try {
+    // Usar no-cors — Sheets recibe el POST aunque no podamos leer la respuesta
     await fetch(GAS_URL, {
       method: "POST",
       mode: "no-cors",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
-    console.log("✅ Sincronizado con Google Sheets");
+    setStatus("☁️ Sincronizado", "ok");
   } catch (err) {
-    console.warn("⚠️ Error al sincronizar:", err);
+    setStatus("⚠️ Sin conexión — guardado local", "warn");
+    console.warn("Sync error:", err);
   }
 }
 
-// ─── PERSISTENCIA CON localStorage ───────────────────────────────────────────
+// Carga estado desde Sheets al abrir
+async function loadFromSheets() {
+  setStatus("⏳ Cargando datos...", "loading");
+  try {
+    const res  = await fetch(GAS_URL + "?action=getPagos", { cache: "no-store" });
+    const data = await res.json();
+
+    if (data && data.pagos) {
+      // Restaurar pagos desde Sheets
+      MESES.forEach(m => {
+        paidState[m] = new Set();
+        if (data.pagos[m]) {
+          data.pagos[m].forEach(idx => paidState[m].add(Number(idx)));
+        }
+      });
+      // Actualizar localStorage con datos del servidor
+      savePaidStateLocal();
+      setStatus("☁️ Datos cargados desde Sheets", "ok");
+      return true;
+    }
+  } catch (err) {
+    console.warn("No se pudo cargar desde Sheets, usando caché local:", err);
+    setStatus("📱 Modo offline — datos locales", "warn");
+  }
+  // Fallback: usar localStorage si Sheets no responde
+  loadPaidStateLocal();
+  return false;
+}
+
+function setStatus(msg, type) {
+  const el = document.getElementById("sync-status");
+  if (!el) return;
+  el.textContent = msg;
+  el.className   = "sync-status " + type;
+  if (type === "ok") setTimeout(() => { el.textContent = ""; }, 3000);
+}
+
+// ─── PERSISTENCIA LOCAL (respaldo offline) ────────────────────────────────────
 const STORAGE_KEY = "gastos2026_pagos";
 
-function savePaidState() {
+function savePaidStateLocal() {
   const obj = {};
-  MESES.forEach(m => {
-    obj[m] = Array.from(paidState[m]);
-  });
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(obj));
-  } catch(e) {
-    console.warn("No se pudo guardar en localStorage:", e);
-  }
+  MESES.forEach(m => { obj[m] = Array.from(paidState[m]); });
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(obj)); } catch(e) {}
 }
 
-function loadPaidState() {
+function loadPaidStateLocal() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return;
     const obj = JSON.parse(raw);
     MESES.forEach(m => {
       if (obj[m] && Array.isArray(obj[m])) {
-        paidState[m] = new Set(obj[m]);
+        paidState[m] = new Set(obj[m].map(Number));
       }
     });
-  } catch(e) {
-    console.warn("No se pudo leer localStorage:", e);
-  }
+  } catch(e) {}
 }
 
 // ─── STATE ────────────────────────────────────────────────────────────────────
@@ -97,13 +131,14 @@ const getPaidTotal = month => {
   return t;
 };
 
-// Devuelve items ordenados: pendientes primero, pagados al final
+// Pendientes primero, pagados al final
 function getSortedItems(month) {
   const items = getMonthGastos(month);
   const set   = paidState[month];
-  const pending = items.filter((_, i) => !set.has(i));
-  const paid    = items.filter((_, i) =>  set.has(i));
-  return [...pending, ...paid];
+  return [
+    ...items.filter((_, i) => !set.has(i)),
+    ...items.filter((_, i) =>  set.has(i)),
+  ];
 }
 
 // ─── MONTHS ───────────────────────────────────────────────────────────────────
@@ -138,8 +173,7 @@ function renderTable() {
   const tbody  = document.getElementById("table-body");
   tbody.innerHTML = "";
 
-  sorted.forEach((g) => {
-    // Buscar índice original para toggle
+  sorted.forEach(g => {
     const origIndex = GASTOS_DATA.gastos.findIndex(x => x.n === g.n);
     const isPaid    = paidState[currentMonth].has(origIndex);
     const pct       = total > 0 ? ((g.monto / total) * 100).toFixed(1) : "0.0";
@@ -169,7 +203,7 @@ function renderMobileCards() {
   const container = document.getElementById("expense-cards");
   container.innerHTML = "";
 
-  sorted.forEach((g) => {
+  sorted.forEach(g => {
     const origIndex = GASTOS_DATA.gastos.findIndex(x => x.n === g.n);
     const isPaid    = paidState[currentMonth].has(origIndex);
     const pct       = total > 0 ? ((g.monto / total) * 100).toFixed(1) : "0.0";
@@ -194,25 +228,23 @@ function togglePaid(index) {
   const set = paidState[currentMonth];
   set.has(index) ? set.delete(index) : set.add(index);
 
-  // Guardar inmediatamente en localStorage
-  savePaidState();
-
   renderTable();
   renderMobileCards();
   renderSummary();
   renderMonths();
   renderChart();
 
-  // Sincronizar con Google Apps Script
+  // Enviar TODO el estado del mes a Sheets
   const items = getMonthGastos(currentMonth);
   syncToSheets({
-    action: "updatePago",
-    mes: currentMonth,
-    gastos: items.map((g, i) => ({
+    action:      "updatePagos",
+    mes:         currentMonth,
+    gastos:      items.map((g, i) => ({
       n:       g.n,
       detalle: g.detalle,
       monto:   g.monto,
       pagado:  set.has(i),
+      index:   i,
     })),
     totalPagado: getPaidTotal(currentMonth),
     timestamp:   new Date().toISOString(),
@@ -229,17 +261,17 @@ function renderSummary() {
   const paidCount  = paidState[currentMonth].size;
   const totalCount = items.length;
 
-  document.getElementById("stat-total").textContent      = fmt(total);
-  document.getElementById("stat-disponible").textContent = fmt(disp);
-  document.getElementById("stat-pagado").textContent     = fmt(pagado);
-  document.getElementById("val-gastos").textContent      = fmt(total);
-  document.getElementById("val-disponible").textContent  = fmt(disp);
-  document.getElementById("val-pagado").textContent      = fmt(pagado);
+  document.getElementById("stat-total").textContent       = fmt(total);
+  document.getElementById("stat-disponible").textContent  = fmt(disp);
+  document.getElementById("stat-pagado").textContent      = fmt(pagado);
+  document.getElementById("val-gastos").textContent       = fmt(total);
+  document.getElementById("val-disponible").textContent   = fmt(disp);
+  document.getElementById("val-pagado").textContent       = fmt(pagado);
   document.getElementById("paid-count-badge").textContent = `${paidCount}/${totalCount}`;
 
   const sub = document.getElementById("sub-pagado");
-  sub.textContent = paidCount === 0          ? "Ningún gasto cancelado aún"
-                  : paidCount === totalCount  ? "✅ ¡Todos los gastos cancelados!"
+  sub.textContent = paidCount === 0         ? "Ningún gasto cancelado aún"
+                  : paidCount === totalCount ? "✅ ¡Todos los gastos cancelados!"
                   : `${paidCount} de ${totalCount} gastos cancelados`;
 
   const gastPct = Math.min((total  / sueldo) * 100, 100).toFixed(1);
@@ -256,11 +288,8 @@ function renderChart() {
   const items  = getMonthGastos(currentMonth);
   const total  = getTotal(items);
   const canvas = document.getElementById("pie-chart");
-
-  const isMobile = window.innerWidth <= 600;
-  const size = isMobile ? 200 : 240;
-  canvas.width  = size;
-  canvas.height = size;
+  const size   = window.innerWidth <= 600 ? 200 : 240;
+  canvas.width = canvas.height = size;
 
   const ctx = canvas.getContext("2d");
   const cx  = size / 2, cy = size / 2, r = size * 0.46;
@@ -270,36 +299,26 @@ function renderChart() {
   items.forEach((g, i) => {
     const isPaid = paidState[currentMonth].has(i);
     const slice  = (g.monto / total) * 2 * Math.PI;
-    ctx.beginPath();
-    ctx.moveTo(cx, cy);
+    ctx.beginPath(); ctx.moveTo(cx, cy);
     ctx.arc(cx, cy, r, start, start + slice);
     ctx.closePath();
     ctx.fillStyle   = isPaid ? "#40d898" : COLORS[i % COLORS.length];
     ctx.globalAlpha = isPaid ? 1 : 0.85;
-    ctx.fill();
-    ctx.globalAlpha = 1;
-    ctx.strokeStyle = "#0d0f14";
-    ctx.lineWidth   = 2;
-    ctx.stroke();
+    ctx.fill(); ctx.globalAlpha = 1;
+    ctx.strokeStyle = "#0d0f14"; ctx.lineWidth = 2; ctx.stroke();
     start += slice;
   });
 
-  const holeR = size * 0.21;
-  ctx.beginPath();
-  ctx.arc(cx, cy, holeR, 0, 2 * Math.PI);
-  ctx.fillStyle = "#0d0f14";
-  ctx.fill();
+  ctx.beginPath(); ctx.arc(cx, cy, size * 0.21, 0, 2 * Math.PI);
+  ctx.fillStyle = "#0d0f14"; ctx.fill();
 
   const paidTotal  = getPaidTotal(currentMonth);
-  const displayVal = paidTotal > 0 ? fmt(paidTotal) : fmt(total);
-  ctx.fillStyle = paidTotal > 0 ? "#40d898" : "#e8eaf2";
-  const fontSize = size < 220 ? 11 : 13;
-  ctx.font = `bold ${fontSize}px 'Space Mono', monospace`;
-  ctx.textAlign    = "center";
-  ctx.textBaseline = "middle";
-  ctx.fillText(displayVal, cx, cy - 7);
-  ctx.fillStyle = "#6b7494";
-  ctx.font = `${fontSize - 2}px 'Space Mono', monospace`;
+  const fontSize   = size < 220 ? 11 : 13;
+  ctx.fillStyle    = paidTotal > 0 ? "#40d898" : "#e8eaf2";
+  ctx.font         = `bold ${fontSize}px 'Space Mono', monospace`;
+  ctx.textAlign    = "center"; ctx.textBaseline = "middle";
+  ctx.fillText(paidTotal > 0 ? fmt(paidTotal) : fmt(total), cx, cy - 7);
+  ctx.fillStyle = "#6b7494"; ctx.font = `${fontSize - 2}px 'Space Mono', monospace`;
   ctx.fillText(paidTotal > 0 ? "cancelado" : "total", cx, cy + 10);
 
   const legend = document.getElementById("chart-legend");
@@ -330,44 +349,42 @@ let deferredPrompt = null;
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
     navigator.serviceWorker.register("./sw.js")
-      .then(reg => {
-        console.log("SW registered:", reg.scope);
-        document.getElementById("pwa-status").textContent = "✓ App disponible offline";
-      })
-      .catch(err => console.warn("SW registration failed:", err));
+      .then(() => { document.getElementById("pwa-status").textContent = "✓ App disponible offline"; })
+      .catch(err => console.warn("SW error:", err));
   });
 }
 
-window.addEventListener("beforeinstallprompt", (e) => {
-  e.preventDefault();
-  deferredPrompt = e;
+window.addEventListener("beforeinstallprompt", e => {
+  e.preventDefault(); deferredPrompt = e;
   document.getElementById("pwa-banner").style.display = "flex";
 });
 
-document.addEventListener("DOMContentLoaded", () => {
-  document.getElementById("pwa-install-btn").addEventListener("click", async () => {
-    if (!deferredPrompt) return;
-    deferredPrompt.prompt();
-    const { outcome } = await deferredPrompt.userChoice;
-    deferredPrompt = null;
-    document.getElementById("pwa-banner").style.display = "none";
-  });
-
-  document.getElementById("pwa-close-btn").addEventListener("click", () => {
-    document.getElementById("pwa-banner").style.display = "none";
-  });
-});
-
 window.addEventListener("appinstalled", () => {
-  document.getElementById("pwa-status").textContent = "✓ App instalada correctamente";
+  document.getElementById("pwa-status").textContent = "✓ App instalada";
   document.getElementById("pwa-banner").style.display = "none";
 });
 
-window.addEventListener("resize", () => { renderChart(); });
+window.addEventListener("resize", () => renderChart());
 
 // ─── INIT ─────────────────────────────────────────────────────────────────────
-document.addEventListener("DOMContentLoaded", () => {
-  loadPaidState();                              // ← recuperar pagos guardados
+document.addEventListener("DOMContentLoaded", async () => {
+  document.getElementById("pwa-install-btn").addEventListener("click", async () => {
+    if (!deferredPrompt) return;
+    deferredPrompt.prompt();
+    await deferredPrompt.userChoice;
+    deferredPrompt = null;
+    document.getElementById("pwa-banner").style.display = "none";
+  });
+  document.getElementById("pwa-close-btn").addEventListener("click", () => {
+    document.getElementById("pwa-banner").style.display = "none";
+  });
+
+  // 1. Cargar caché local inmediatamente (respuesta rápida)
+  loadPaidStateLocal();
   const mesActual = MESES[new Date().getMonth()];
   selectMonth(mesActual);
+
+  // 2. Luego intentar sincronizar con Sheets en segundo plano
+  const loaded = await loadFromSheets();
+  if (loaded) selectMonth(mesActual); // re-renderizar con datos del servidor
 });
