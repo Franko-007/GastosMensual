@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
+  <title>Gastos 2026</title>
+
+  <!-- PWA -->
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#f0c93a" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Gastos 2026" />
+  <link rel="apple-touch-icon" href="https://i.postimg.cc/25mZ28P8/maskable-icon-x512.png" />
+  <meta name="description" content="Control de gastos mensuales 2026" />
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;600;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- PWA Install Banner -->
+  <div id="pwa-banner" class="pwa-banner" style="display:none">
+    <span class="pwa-icon">📲</span>
+    <span class="pwa-text">Instala la app en tu dispositivo</span>
+    <button class="pwa-install-btn" id="pwa-install-btn">Instalar</button>
+    <button class="pwa-close-btn" id="pwa-close-btn">✕</button>
+  </div>
+
+  <header>
+    <div class="header-inner">
+      <div class="logo-block">
+        <span class="logo-icon">₱</span>
+        <div>
+          <h1>GASTOS 2026</h1>
+          <p class="subtitle">Control de Gastos Mensuales</p>
+        </div>
+      </div>
+      <div class="header-stats">
+        <div class="stat-pill">
+          <span class="stat-label">Sueldo</span>
+          <span class="stat-value" id="stat-sueldo">$750.000</span>
+        </div>
+        <div class="stat-pill highlight">
+          <span class="stat-label">Gastos</span>
+          <span class="stat-value" id="stat-total">$608.000</span>
+        </div>
+        <div class="stat-pill positive">
+          <span class="stat-label">Bolsillo</span>
+          <span class="stat-value" id="stat-disponible">$142.000</span>
+        </div>
+        <div class="stat-pill paid-pill">
+          <span class="stat-label">Cancelado</span>
+          <span class="stat-value" id="stat-pagado">$0</span>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <!-- Month Selector -->
+    <section class="month-selector">
+      <h2 class="section-title">Selecciona el Mes</h2>
+      <div class="months-grid" id="months-grid"></div>
+    </section>
+
+    <!-- Summary Cards -->
+    <section class="summary-section">
+      <div class="summary-card">
+        <div class="card-label">Sueldo</div>
+        <div class="card-value">$750.000</div>
+        <div class="card-bar"><div class="card-bar-fill sueldo-fill" style="width:100%"></div></div>
+      </div>
+      <div class="summary-card">
+        <div class="card-label">Total Gastos</div>
+        <div class="card-value" id="val-gastos">$608.000</div>
+        <div class="card-bar"><div class="card-bar-fill gastos-fill" id="bar-gastos"></div></div>
+      </div>
+      <div class="summary-card positive-card">
+        <div class="card-label">Para el Bolsillo</div>
+        <div class="card-value" id="val-disponible">$142.000</div>
+        <div class="card-bar"><div class="card-bar-fill disponible-fill" id="bar-disponible"></div></div>
+      </div>
+      <div class="summary-card paid-card">
+        <div class="card-label-row">
+          <span class="card-label">Ya Cancelado</span>
+          <span class="paid-count-badge" id="paid-count-badge">0/8</span>
+        </div>
+        <div class="card-value paid-value" id="val-pagado">$0</div>
+        <div class="card-sub" id="sub-pagado">Ningún gasto cancelado aún</div>
+        <div class="card-bar"><div class="card-bar-fill pagado-fill" id="bar-pagado" style="width:0%"></div></div>
+      </div>
+    </section>
+
+    <!-- Expense Table -->
+    <section class="table-section">
+      <h2 class="section-title">
+        Detalle de Gastos
+        <span class="month-badge" id="month-badge">ENERO</span>
+        <span class="paid-hint">toca ✓ para marcar pagado</span>
+      </h2>
+
+      <!-- Mobile cards view -->
+      <div class="expense-cards" id="expense-cards"></div>
+
+      <!-- Desktop table view -->
+      <div class="table-wrapper">
+        <table id="expenses-table">
+          <thead>
+            <tr>
+              <th>N°</th>
+              <th>Detalle</th>
+              <th>Monto</th>
+              <th>%</th>
+              <th class="th-paid">Pagado</th>
+            </tr>
+          </thead>
+          <tbody id="table-body"></tbody>
+          <tfoot>
+            <tr class="total-row">
+              <td colspan="2">TOTAL</td>
+              <td id="foot-total">$608.000</td>
+              <td colspan="2"></td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </section>
+
+    <!-- Chart Section -->
+    <section class="chart-section">
+      <h2 class="section-title">Distribución Visual</h2>
+      <div class="chart-container">
+        <canvas id="pie-chart" width="240" height="240"></canvas>
+        <div class="chart-legend" id="chart-legend"></div>
+      </div>
+    </section>
+
+    <!-- Google Sheets CTA -->
+    <section class="sheets-section">
+      <div class="sheets-card">
+        <div class="sheets-icon">
+          <svg viewBox="0 0 48 48" width="40" height="40"><rect width="48" height="48" rx="8" fill="#0F9D58"/><rect x="14" y="10" width="20" height="28" rx="2" fill="white" opacity="0.9"/><rect x="17" y="16" width="14" height="2" rx="1" fill="#0F9D58"/><rect x="17" y="20" width="14" height="2" rx="1" fill="#0F9D58"/><rect x="17" y="24" width="10" height="2" rx="1" fill="#0F9D58"/></svg>
+        </div>
+        <div class="sheets-info">
+          <h3>Sincronizar con Google Sheets</h3>
+          <p>Usa <strong>codigo.gs</strong> en Apps Script para gestionar tus gastos automáticamente.</p>
+        </div>
+        <button class="sheets-btn" onclick="showGSInfo()">Ver Instrucciones</button>
+      </div>
+      <div class="gs-instructions" id="gs-instructions" style="display:none">
+        <h4>📋 Cómo usar codigo.gs:</h4>
+        <ol>
+          <li>Abre Google Sheets y crea una nueva hoja.</li>
+          <li>Ve a <strong>Extensiones → Apps Script</strong>.</li>
+          <li>Pega el contenido de <strong>codigo.gs</strong>.</li>
+          <li>Guarda y ejecuta <code>inicializarHoja()</code>.</li>
+          <li>Autoriza los permisos y ¡listo!</li>
+        </ol>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <p>Gastos Mensuales 2026 &mdash; Creado Por Franco</p>
+    <p id="pwa-status" class="pwa-status"></p>
+  </footer>
+
+  <script src="script.js"></script>
+</body>
+</html>

@@ -1,0 +1,38 @@
+{
+  "name": "Gastos Mensuales 2026",
+  "short_name": "Gastos 2026",
+  "description": "Control de gastos mensuales personal",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#0d0f14",
+  "theme_color": "#f0c93a",
+  "orientation": "any",
+  "lang": "es",
+  "categories": ["finance", "productivity"],
+  "icons": [
+    {
+      "src": "https://i.postimg.cc/25mZ28P8/maskable-icon-x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "https://i.postimg.cc/25mZ28P8/maskable-icon-x512.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Ver Gastos",
+      "url": "./index.html",
+      "icons": [
+        {
+          "src": "https://i.postimg.cc/25mZ28P8/maskable-icon-x512.png",
+          "sizes": "512x512"
+        }
+      ]
+    }
+  ]
+}
