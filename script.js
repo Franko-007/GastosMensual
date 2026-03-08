@@ -28,7 +28,7 @@ const COLORS = [
 ];
 
 // ─── GOOGLE APPS SCRIPT API ───────────────────────────────────────────────────
-const GAS_URL = "https://script.google.com/macros/s/AKfycbxwztGeOMjSjanbHn0nRHkET-tpDXC9bZ7f1-T0nmtdPVRwHlW27n_r0DJRXkr8F7o1/exec";
+const GAS_URL = "https://script.google.com/macros/s/AKfycbykYAJzA3DPFynWpUJb5mGqpMtmvp6BN9JA8OvtiaFxeAi2JPWuLoN2SbAa3eoJ8FDA/exec";
 
 // Guarda estado en Sheets (usa localStorage como caché local también)
 async function syncToSheets(payload) {
@@ -49,33 +49,55 @@ async function syncToSheets(payload) {
   }
 }
 
-// Carga estado desde Sheets al abrir
-async function loadFromSheets() {
-  setStatus("⏳ Cargando datos...", "loading");
-  try {
-    const res  = await fetch(GAS_URL + "?action=getPagos", { cache: "no-store" });
-    const data = await res.json();
+// Carga estado desde Sheets via JSONP (evita bloqueo CORS)
+function loadFromSheets() {
+  setStatus("⏳ Cargando datos desde Sheets...", "loading");
+  return new Promise((resolve) => {
+    const cbName = "gsCallback_" + Date.now();
+    const timeout = setTimeout(() => {
+      cleanup();
+      console.warn("Sheets timeout — usando caché local");
+      setStatus("📱 Sin conexión — datos locales", "warn");
+      loadPaidStateLocal();
+      resolve(false);
+    }, 8000);
 
-    if (data && data.pagos) {
-      // Restaurar pagos desde Sheets
-      MESES.forEach(m => {
-        paidState[m] = new Set();
-        if (data.pagos[m]) {
-          data.pagos[m].forEach(idx => paidState[m].add(Number(idx)));
-        }
-      });
-      // Actualizar localStorage con datos del servidor
-      savePaidStateLocal();
-      setStatus("☁️ Datos cargados desde Sheets", "ok");
-      return true;
+    function cleanup() {
+      clearTimeout(timeout);
+      delete window[cbName];
+      const s = document.getElementById("jsonp-script");
+      if (s) s.remove();
     }
-  } catch (err) {
-    console.warn("No se pudo cargar desde Sheets, usando caché local:", err);
-    setStatus("📱 Modo offline — datos locales", "warn");
-  }
-  // Fallback: usar localStorage si Sheets no responde
-  loadPaidStateLocal();
-  return false;
+
+    window[cbName] = function(data) {
+      cleanup();
+      if (data && data.pagos) {
+        MESES.forEach(m => {
+          paidState[m] = new Set();
+          if (data.pagos[m]) {
+            data.pagos[m].forEach(idx => paidState[m].add(Number(idx)));
+          }
+        });
+        savePaidStateLocal();
+        setStatus("☁️ Datos cargados desde Sheets", "ok");
+        resolve(true);
+      } else {
+        loadPaidStateLocal();
+        resolve(false);
+      }
+    };
+
+    const script = document.createElement("script");
+    script.id  = "jsonp-script";
+    script.src = GAS_URL + "?action=getPagos&callback=" + cbName;
+    script.onerror = () => {
+      cleanup();
+      setStatus("📱 Sin conexión — datos locales", "warn");
+      loadPaidStateLocal();
+      resolve(false);
+    };
+    document.head.appendChild(script);
+  });
 }
 
 function setStatus(msg, type) {
