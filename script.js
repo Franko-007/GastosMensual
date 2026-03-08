@@ -32,7 +32,7 @@ const GAS_URL = "https://script.google.com/macros/s/AKfycbxEgAqCo075hdmRPjnJlCtE
 
 async function syncToSheets(payload) {
   try {
-    const res = await fetch(GAS_URL, {
+    await fetch(GAS_URL, {
       method: "POST",
       mode: "no-cors",
       headers: { "Content-Type": "application/json" },
@@ -44,14 +44,33 @@ async function syncToSheets(payload) {
   }
 }
 
-async function fetchFromSheets() {
+// ─── PERSISTENCIA CON localStorage ───────────────────────────────────────────
+const STORAGE_KEY = "gastos2026_pagos";
+
+function savePaidState() {
+  const obj = {};
+  MESES.forEach(m => {
+    obj[m] = Array.from(paidState[m]);
+  });
   try {
-    const res  = await fetch(GAS_URL + "?action=getData");
-    const data = await res.json();
-    return data;
-  } catch (err) {
-    console.warn("⚠️ No se pudo cargar desde Sheets:", err);
-    return null;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(obj));
+  } catch(e) {
+    console.warn("No se pudo guardar en localStorage:", e);
+  }
+}
+
+function loadPaidState() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return;
+    const obj = JSON.parse(raw);
+    MESES.forEach(m => {
+      if (obj[m] && Array.isArray(obj[m])) {
+        paidState[m] = new Set(obj[m]);
+      }
+    });
+  } catch(e) {
+    console.warn("No se pudo leer localStorage:", e);
   }
 }
 
@@ -77,6 +96,15 @@ const getPaidTotal = month => {
   paidState[month].forEach(i => { t += items[i].monto; });
   return t;
 };
+
+// Devuelve items ordenados: pendientes primero, pagados al final
+function getSortedItems(month) {
+  const items = getMonthGastos(month);
+  const set   = paidState[month];
+  const pending = items.filter((_, i) => !set.has(i));
+  const paid    = items.filter((_, i) =>  set.has(i));
+  return [...pending, ...paid];
+}
 
 // ─── MONTHS ───────────────────────────────────────────────────────────────────
 function renderMonths() {
@@ -105,23 +133,25 @@ function selectMonth(month) {
 
 // ─── TABLE (desktop) ──────────────────────────────────────────────────────────
 function renderTable() {
-  const items = getMonthGastos(currentMonth);
-  const total = getTotal(items);
-  const tbody = document.getElementById("table-body");
+  const sorted = getSortedItems(currentMonth);
+  const total  = getTotal(getMonthGastos(currentMonth));
+  const tbody  = document.getElementById("table-body");
   tbody.innerHTML = "";
 
-  items.forEach((g, i) => {
-    const pct    = total > 0 ? ((g.monto / total) * 100).toFixed(1) : "0.0";
-    const isPaid = paidState[currentMonth].has(i);
-    const tr     = document.createElement("tr");
-    tr.className = isPaid ? "row-paid" : "";
+  sorted.forEach((g) => {
+    // Buscar índice original para toggle
+    const origIndex = GASTOS_DATA.gastos.findIndex(x => x.n === g.n);
+    const isPaid    = paidState[currentMonth].has(origIndex);
+    const pct       = total > 0 ? ((g.monto / total) * 100).toFixed(1) : "0.0";
+    const tr        = document.createElement("tr");
+    tr.className    = isPaid ? "row-paid" : "";
     tr.innerHTML = `
       <td class="td-num">${g.n}</td>
       <td class="td-detalle ${isPaid ? "detalle-paid" : ""}">${g.detalle}</td>
       <td class="amount-cell ${isPaid ? "amount-paid" : ""}">${fmt(g.monto)}</td>
       <td class="pct-cell">${pct}%</td>
       <td class="td-check">
-        <button class="check-btn ${isPaid ? "check-active" : ""}" onclick="togglePaid(${i})">
+        <button class="check-btn ${isPaid ? "check-active" : ""}" onclick="togglePaid(${origIndex})">
           <span class="check-icon">${isPaid ? "✓" : "○"}</span>
           <span class="check-label">${isPaid ? "Pagado" : "Pendiente"}</span>
         </button>
@@ -134,24 +164,25 @@ function renderTable() {
 
 // ─── MOBILE CARDS ─────────────────────────────────────────────────────────────
 function renderMobileCards() {
-  const items     = getMonthGastos(currentMonth);
-  const total     = getTotal(items);
+  const sorted    = getSortedItems(currentMonth);
+  const total     = getTotal(getMonthGastos(currentMonth));
   const container = document.getElementById("expense-cards");
   container.innerHTML = "";
 
-  items.forEach((g, i) => {
-    const pct    = total > 0 ? ((g.monto / total) * 100).toFixed(1) : "0.0";
-    const isPaid = paidState[currentMonth].has(i);
-    const card   = document.createElement("div");
-    card.className = "expense-card" + (isPaid ? " card-paid" : "");
-    card.innerHTML = `
+  sorted.forEach((g) => {
+    const origIndex = GASTOS_DATA.gastos.findIndex(x => x.n === g.n);
+    const isPaid    = paidState[currentMonth].has(origIndex);
+    const pct       = total > 0 ? ((g.monto / total) * 100).toFixed(1) : "0.0";
+    const card      = document.createElement("div");
+    card.className  = "expense-card" + (isPaid ? " card-paid" : "");
+    card.innerHTML  = `
       <span class="exp-num">${g.n}</span>
       <div class="exp-info">
         <div class="exp-name ${isPaid ? "paid-name" : ""}">${g.detalle}</div>
         <div class="exp-amount ${isPaid ? "paid-amount" : ""}">${fmt(g.monto)}</div>
       </div>
       <span class="exp-pct">${pct}%</span>
-      <button class="exp-check-btn ${isPaid ? "active" : ""}" onclick="togglePaid(${i})" title="${isPaid ? "Desmarcar" : "Marcar pagado"}">
+      <button class="exp-check-btn ${isPaid ? "active" : ""}" onclick="togglePaid(${origIndex})" title="${isPaid ? "Desmarcar" : "Marcar pagado"}">
         ${isPaid ? "✓" : "○"}
       </button>`;
     container.appendChild(card);
@@ -162,6 +193,10 @@ function renderMobileCards() {
 function togglePaid(index) {
   const set = paidState[currentMonth];
   set.has(index) ? set.delete(index) : set.add(index);
+
+  // Guardar inmediatamente en localStorage
+  savePaidState();
+
   renderTable();
   renderMobileCards();
   renderSummary();
@@ -203,8 +238,8 @@ function renderSummary() {
   document.getElementById("paid-count-badge").textContent = `${paidCount}/${totalCount}`;
 
   const sub = document.getElementById("sub-pagado");
-  sub.textContent = paidCount === 0       ? "Ningún gasto cancelado aún"
-                  : paidCount === totalCount ? "✅ ¡Todos los gastos cancelados!"
+  sub.textContent = paidCount === 0          ? "Ningún gasto cancelado aún"
+                  : paidCount === totalCount  ? "✅ ¡Todos los gastos cancelados!"
                   : `${paidCount} de ${totalCount} gastos cancelados`;
 
   const gastPct = Math.min((total  / sueldo) * 100, 100).toFixed(1);
@@ -222,7 +257,6 @@ function renderChart() {
   const total  = getTotal(items);
   const canvas = document.getElementById("pie-chart");
 
-  // Responsive canvas size
   const isMobile = window.innerWidth <= 600;
   const size = isMobile ? 200 : 240;
   canvas.width  = size;
@@ -230,7 +264,6 @@ function renderChart() {
 
   const ctx = canvas.getContext("2d");
   const cx  = size / 2, cy = size / 2, r = size * 0.46;
-
   ctx.clearRect(0, 0, size, size);
 
   let start = -Math.PI / 2;
@@ -251,15 +284,13 @@ function renderChart() {
     start += slice;
   });
 
-  // Donut hole
   const holeR = size * 0.21;
   ctx.beginPath();
   ctx.arc(cx, cy, holeR, 0, 2 * Math.PI);
   ctx.fillStyle = "#0d0f14";
   ctx.fill();
 
-  // Center text
-  const paidTotal = getPaidTotal(currentMonth);
+  const paidTotal  = getPaidTotal(currentMonth);
   const displayVal = paidTotal > 0 ? fmt(paidTotal) : fmt(total);
   ctx.fillStyle = paidTotal > 0 ? "#40d898" : "#e8eaf2";
   const fontSize = size < 220 ? 11 : 13;
@@ -271,7 +302,6 @@ function renderChart() {
   ctx.font = `${fontSize - 2}px 'Space Mono', monospace`;
   ctx.fillText(paidTotal > 0 ? "cancelado" : "total", cx, cy + 10);
 
-  // Legend
   const legend = document.getElementById("chart-legend");
   legend.innerHTML = "";
   items.forEach((g, i) => {
@@ -311,8 +341,7 @@ if ("serviceWorker" in navigator) {
 window.addEventListener("beforeinstallprompt", (e) => {
   e.preventDefault();
   deferredPrompt = e;
-  const banner = document.getElementById("pwa-banner");
-  banner.style.display = "flex";
+  document.getElementById("pwa-banner").style.display = "flex";
 });
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -320,7 +349,6 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!deferredPrompt) return;
     deferredPrompt.prompt();
     const { outcome } = await deferredPrompt.userChoice;
-    console.log("PWA install outcome:", outcome);
     deferredPrompt = null;
     document.getElementById("pwa-banner").style.display = "none";
   });
@@ -335,12 +363,11 @@ window.addEventListener("appinstalled", () => {
   document.getElementById("pwa-banner").style.display = "none";
 });
 
-// Redraw chart on resize
 window.addEventListener("resize", () => { renderChart(); });
 
 // ─── INIT ─────────────────────────────────────────────────────────────────────
 document.addEventListener("DOMContentLoaded", () => {
-  // Abrir automáticamente en el mes actual
+  loadPaidState();                              // ← recuperar pagos guardados
   const mesActual = MESES[new Date().getMonth()];
   selectMonth(mesActual);
 });
