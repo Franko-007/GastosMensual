@@ -2,7 +2,7 @@
 const GASTOS_DATA = {
   sueldo: 750000,
   gastos: [
-    { n: 1, detalle: "ARRIENDO",         base: 320000 },
+    { n: 1, detalle: "ARRIENDO",         base: 350000 },
     { n: 2, detalle: "LUZ Y AGUA",       base: 35000  },
     { n: 3, detalle: "PLAN MÓVIL",       base: 25000  },
     { n: 4, detalle: "LA POLAR",         base: 32000  },
