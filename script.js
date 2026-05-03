@@ -7,7 +7,7 @@ const GASTOS_DATA = {
     { n: 3, detalle: "PLAN MÓVIL",       base: 25000  },
     { n: 4, detalle: "LA POLAR",         base: 32000  },
     { n: 5, detalle: "BENCINA",          base: 50000  },
-    { n: 6, detalle: "SUPERMERCADO",     base: 100000 },
+    { n: 6, detalle: "SUPERMERCADO",     base: 120000 },
     { n: 7, detalle: "ALIMENTO CAPITÁN", base: 40000  },
     { n: 8, detalle: "VESP. SUR",        base: 6000   },
   ],
